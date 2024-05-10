@@ -16,9 +16,9 @@ import pandas as pd
 warnings.simplefilter("always", category=PendingDeprecationWarning) 
 warnings.simplefilter("always", category=DeprecationWarning) 
 wotb = wargaming.WoTB('id', region='asia', language='en')
-key_path = "json pass"
+key_path = "json"
 google_credentials = service_account.Credentials.from_service_account_file(key_path, scopes=['https://www.googleapis.com/auth/cloud-platform'])
-query ='SELECT * FROM `table` order by id ASC'
+query ='query'
 
 id_count = 0
 
@@ -26,12 +26,13 @@ intents = discord.Intents.default()
 intents.members = True 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
-gbq_client = bigquery.Client()
-gcs_client = storage.Client()
-bucket = gcs_client.bucket('appspot.com')
+gbq_client = bigquery.Client.from_service_account_json(key_path)
+gcs_client = storage.Client.from_service_account_json(key_path)
+bucket = gcs_client.bucket('bucket')
 blob = bucket.blob('wwn_public.csv')
 bpd.options.bigquery.project = 'project'
 bpd.options.bigquery.location = "us-west1"
+bpd.options.bigquery.credencials = google_credentials
     
 
 class Blitz(commands.Cog):
@@ -43,28 +44,6 @@ class Blitz(commands.Cog):
         print('Successfully loaded : PostForum')
         await self.bot.tree.sync(guild=discord.Object(477666728646672385))
         print("sync")
-
-    async def blitz_connection(author_ign):
-        player_data = wotb.account.list(search = author_ign)
-        if player_data:
-            await client.get_channel(701429114128695357).send(f"IGN検索中…")
-        else:
-            return
-
-        author_ign = player_data[0]["nickname"]
-        user_id = player_data[0]["account_id"]
-        player_clan = wotb.clans.accountinfo(account_id = user_id)
-
-        if player_clan[user_id]["clan_id"]:    
-            clan_p:int = player_clan[user_id]["clan_id"]
-            clan_detail = wotb.clans.info(clan_id = clan_p)
-            clan_tag = clan_detail[clan_p]["tag"]
-        else:
-            clan_p = 0
-            clan_tag = None
-        
-        return author_ign, user_id, clan_p, clan_tag
-
 
     @commands.hybrid_command(name = "bcn_add", with_app_command = True, description ="データベースにユーザーデータを登録します")
     @app_commands.guilds(discord.Object(id = 477666728646672385))
@@ -102,7 +81,7 @@ class Blitz(commands.Cog):
         user_id = player_data[0]["account_id"]
         player_clan = wotb.clans.accountinfo(account_id = user_id)
 
-        if player_clan[user_id]["clan_id"]:    
+        if 'clan_id' in player_clan:    
             clan_p:int = player_clan[user_id]["clan_id"]
             clan_detail = wotb.clans.info(clan_id = clan_p)
             clan_tag = clan_detail[clan_p]["tag"]
@@ -128,6 +107,7 @@ class Blitz(commands.Cog):
             date_now = datetime.datetime.now()
             df_sort = df.sort_values('id')
             pick_id = df_sort.iloc[-1]['id']
+            
             if pick_id is None:
                 id_count = 1
             else:
@@ -140,11 +120,23 @@ class Blitz(commands.Cog):
                                     'clan':[clan_tag],
                                     'discord_name':[member.name],
                                     'discord_id':[member.id],
-                                    'discord_nick':[member.nick],
-                                    'date':[date_now]})
+                                    'discord_nickname':[member.nick],
+                                    'date':[date_now]
+                                    })
+            
+            df_add['id']=df_add['id'].astype('Int64')
+            df_add['ign']=df_add['ign'].astype('string[pyarrow]')
+            df_add['wargaming_id']=df_add['wargaming_id'].astype('Int64')
+            df_add['clan']=df_add['clan'].astype('string[pyarrow]')
+            df_add['discord_name']=df_add['discord_name'].astype('string[pyarrow]')
+            df_add['discord_id']=df_add['discord_id'].astype('Int64')
+            df_add['discord_nickname']=df_add['discord_nickname'].astype('string[pyarrow]')
+            df_add['date']=df_add['date'].astype('timestamp[us][pyarrow]')
+
             df_added = bpd.concat([df_sort, df_add])
 
             df_added.to_gbq('table', if_exists='replace')
+            await ctx.send(f"IGN: {author_ign}を登録しました")
 
             guild = ctx.guild
             role_wwn_group = guild.get_role(688932130742337539)
@@ -167,6 +159,7 @@ class Blitz(commands.Cog):
             await member.remove_roles(role_wwna)
             await member.remove_roles(role_wwn_group)
             await member.remove_roles(role_ign)
+            await member.remove_roles(role_visitor)
             await member.add_roles(role_visitor)
 
             if clan_p == 1845:
@@ -191,7 +184,6 @@ class Blitz(commands.Cog):
                 await member.add_roles(role_visitor)
 
         await ctx.send(f"ロールを付与しました。")
-        await ctx.send(f"IGN: {author_ign}を登録しました")
 
     @commands.hybrid_command(name = "bcn_update", with_app_command = True, description ="データベースのユーザーデータを更新します")
     @app_commands.guilds(discord.Object(id = 477666728646672385))
@@ -227,7 +219,7 @@ class Blitz(commands.Cog):
             user_id = player_data[0]["account_id"]
             player_clan = wotb.clans.accountinfo(account_id = user_id)
 
-            if player_clan[user_id]["clan_id"]:    
+            if 'clan_id' in player_clan:    
                 clan_p:int = player_clan[user_id]["clan_id"]
                 clan_detail = wotb.clans.info(clan_id = clan_p)
                 clan_tag = clan_detail[clan_p]["tag"]
@@ -310,47 +302,40 @@ class Blitz(commands.Cog):
         await ctx.send("全ユーザーデータを確認します")
 
         table_id = 'table'
-        df = bpd.read_gbq(table_id, use_cache=False)
-        df_sort = df.sort_values('id')
-        pick_id = df_sort.iloc[-1,0]
-        print(pick_id)
+        df_sort = bpd.read_gbq(query, use_cache=False)
+        #pick_id = df_sort.iloc[-1]['id']
+        pick_id = len(df_sort.index)
         
-        for count in range(pick_id):
-            print(count)
-            update_user = df_sort[df_sort['id'] == count]
-
-            if (update_user.empty):
-                continue
-            
-            update_id = update_user.iat[0,2]
+        for count in range(pick_id):          
+            update_id = df_sort.iloc[count]['wargaming_id']
             player_data = wotb.account.info(account_id = update_id)
-            if (player_data[update_id] != None):
-                author_ign = player_data[update_id]["nickname"],
+
+            if player_data[update_id] is not None:
+                author_ign = player_data[update_id]["nickname"]
                 player_clan = wotb.clans.accountinfo(account_id = update_id)
 
-                if player_clan[update_id]["clan_id"]:    
+                if 'clan_id' in player_clan:    
                     clan_p:int = player_clan[update_id]["clan_id"]
                     clan_detail = wotb.clans.info(clan_id = clan_p)
                     clan_tag = clan_detail[clan_p]["tag"]
                 else:
                     clan_p = 0
                     clan_tag = None
-                        
 
-                member = guild.get_member(update_user.iat[0,5])
-                if (member == None):
+                member = guild.get_member(df_sort.iloc[count]['discord_id'])
+                if (member is None):
                     df_sort = df_sort[df_sort['ign'] != author_ign]
                     await ctx.send(f"{author_ign}：サーバーにいないため削除しました")
                     continue
 
-                if (update_user.iat[0, 1] == author_ign and update_user.iat[0, 3] == clan_tag and update_user.iat[0, 4] == member.name and update_user.iat[0, 6] == member.nick):
+                if (df_sort.iloc[count]['ign'] == author_ign and df_sort.iloc[count]['clan'] == clan_tag and df_sort.iloc[count]['discord_name'] == member.name and df_sort.iloc[count]['discord_nickname'] == member.nick):
+                    print(f"{author_ign}:登録情報に変更がないためスキップしました")
                     continue
                 
-                update_user.iat[0, 1] = author_ign
-                update_user.iat[0, 3] = clan_tag
-                update_user.iat[0, 4] = member.name
-                update_user.iat[0, 6] = member.nick
-                
+                df_sort.iloc[count]['ign'] = author_ign
+                df_sort.iloc[count]['clan'] = clan_tag
+                df_sort.iloc[count]['discord_name'] = member.name
+                df_sort.iloc[count]['disccord_nickname'] = member.nick               
 
                 role_wwn_group = guild.get_role(688932130742337539)
                 role_visitor = guild.get_role(688986060612698142)
@@ -399,10 +384,9 @@ class Blitz(commands.Cog):
                 df_sort = df_sort[df_sort['id'] != update_id]
                 await ctx.send(f"{author_ign}：アカウントが見つからないため削除しました")
                 continue
-
+            
             await ctx.send(f"{author_ign}を更新しました")
-
-            if count % 50 == 0:
+            if count % 10 == 0:
                 df_sort.to_gbq('table', if_exists='replace')
 
         df_sort.to_gbq('table', if_exists='replace')
