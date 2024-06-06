@@ -15,10 +15,10 @@ import pandas as pd
 
 warnings.simplefilter("always", category=PendingDeprecationWarning) 
 warnings.simplefilter("always", category=DeprecationWarning) 
-wotb = wargaming.WoTB('id', region='asia', language='en')
-key_path = "json"
+wotb = wargaming.WoTB('de842520c4223cdcd2317a7b4748ce82', region='asia', language='en')
+key_path = "balmy-visitor-360604-25d2f3a5e80d.json"
 google_credentials = service_account.Credentials.from_service_account_file(key_path, scopes=['https://www.googleapis.com/auth/cloud-platform'])
-query ='query'
+query ='SELECT * FROM `balmy-visitor-360604.bc_neo.wwn_public` order by id ASC'
 
 id_count = 0
 
@@ -28,9 +28,9 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 gbq_client = bigquery.Client.from_service_account_json(key_path)
 gcs_client = storage.Client.from_service_account_json(key_path)
-bucket = gcs_client.bucket('bucket')
+bucket = gcs_client.bucket('balmy-visitor-360604.appspot.com')
 blob = bucket.blob('wwn_public.csv')
-bpd.options.bigquery.project = 'project'
+bpd.options.bigquery.project = 'balmy-visitor-360604'
 bpd.options.bigquery.location = "us-west1"
 bpd.options.bigquery.credencials = google_credentials
     
@@ -45,13 +45,35 @@ class Blitz(commands.Cog):
         await self.bot.tree.sync(guild=discord.Object(477666728646672385))
         print("sync")
 
+    async def blitz_connection(author_ign):
+        player_data = wotb.account.list(search = author_ign)
+        if player_data:
+            await client.get_channel(701429114128695357).send(f"IGN検索中…")
+        else:
+            return
+
+        author_ign = player_data[0]["nickname"]
+        user_id = player_data[0]["account_id"]
+        player_clan = wotb.clans.accountinfo(account_id = user_id)
+
+        if player_clan[user_id]["clan_id"]:    
+            clan_p:int = player_clan[user_id]["clan_id"]
+            clan_detail = wotb.clans.info(clan_id = clan_p)
+            clan_tag = clan_detail[clan_p]["tag"]
+        else:
+            clan_p = 0
+            clan_tag = None
+        
+        return author_ign, user_id, clan_p, clan_tag
+
+
     @commands.hybrid_command(name = "bcn_add", with_app_command = True, description ="データベースにユーザーデータを登録します")
     @app_commands.guilds(discord.Object(id = 477666728646672385))
     async def add(self,ctx,author_ign:str):
         await ctx.send(f"IGN:{author_ign}を登録します")
         guild = ctx.guild
         member = ctx.author
-        table_id = 'table'
+        table_id = 'balmy-visitor-360604.bc_neo.wwn_public'
         df = bpd.read_gbq(table_id, use_cache=False)
 
         if (ctx.channel.id != 701429114128695357):
@@ -81,7 +103,7 @@ class Blitz(commands.Cog):
         user_id = player_data[0]["account_id"]
         player_clan = wotb.clans.accountinfo(account_id = user_id)
 
-        if 'clan_id' in player_clan:    
+        if 'clan_id' in player_clan[user_id]:    
             clan_p:int = player_clan[user_id]["clan_id"]
             clan_detail = wotb.clans.info(clan_id = clan_p)
             clan_tag = clan_detail[clan_p]["tag"]
@@ -135,7 +157,7 @@ class Blitz(commands.Cog):
 
             df_added = bpd.concat([df_sort, df_add])
 
-            df_added.to_gbq('table', if_exists='replace')
+            df_added.to_gbq('balmy-visitor-360604.bc_neo.wwn_public', if_exists='replace')
             await ctx.send(f"IGN: {author_ign}を登録しました")
 
             guild = ctx.guild
@@ -193,7 +215,7 @@ class Blitz(commands.Cog):
             member = ctx.author
             d_id = member.id
             
-            table_id = 'table'
+            table_id = 'balmy-visitor-360604.bc_neo.wwn_public'
             df = bpd.read_gbq(table_id, use_cache=False)
             update_user = df[df['discord_id'] == d_id]
 
@@ -219,7 +241,7 @@ class Blitz(commands.Cog):
             user_id = player_data[0]["account_id"]
             player_clan = wotb.clans.accountinfo(account_id = user_id)
 
-            if 'clan_id' in player_clan:    
+            if 'clan_id' in player_clan[user_id]:    
                 clan_p:int = player_clan[user_id]["clan_id"]
                 clan_detail = wotb.clans.info(clan_id = clan_p)
                 clan_tag = clan_detail[clan_p]["tag"]
@@ -245,7 +267,7 @@ class Blitz(commands.Cog):
             df_added = bpd.concat([df_removed, update_user])
 
             df_sort = df_added.sort_values('id')
-            df_sort.to_gbq('table', if_exists='replace')
+            df_sort.to_gbq('balmy-visitor-360604.bc_neo.wwn_public', if_exists='replace')
             
             guild = ctx.guild
             role_wwn_group = guild.get_role(688932130742337539)
@@ -301,7 +323,7 @@ class Blitz(commands.Cog):
         guild = ctx.guild
         await ctx.send("全ユーザーデータを確認します")
 
-        table_id = 'table'
+        table_id = 'balmy-visitor-360604.bc_neo.wwn_public'
         df_sort = bpd.read_gbq(query, use_cache=False)
         #pick_id = df_sort.iloc[-1]['id']
         pick_id = len(df_sort.index)
@@ -314,7 +336,7 @@ class Blitz(commands.Cog):
                 author_ign = player_data[update_id]["nickname"]
                 player_clan = wotb.clans.accountinfo(account_id = update_id)
 
-                if 'clan_id' in player_clan:    
+                if 'clan_id' in player_clan[update_id]:    
                     clan_p:int = player_clan[update_id]["clan_id"]
                     clan_detail = wotb.clans.info(clan_id = clan_p)
                     clan_tag = clan_detail[clan_p]["tag"]
@@ -387,9 +409,9 @@ class Blitz(commands.Cog):
             
             await ctx.send(f"{author_ign}を更新しました")
             if count % 10 == 0:
-                df_sort.to_gbq('table', if_exists='replace')
+                df_sort.to_gbq('balmy-visitor-360604.bc_neo.wwn_public', if_exists='replace')
 
-        df_sort.to_gbq('table', if_exists='replace')
+        df_sort.to_gbq('balmy-visitor-360604.bc_neo.wwn_public', if_exists='replace')
         await ctx.send(f"全データ更新完了")
         
 
@@ -401,7 +423,7 @@ class Blitz(commands.Cog):
             member = ctx.author
             d_id = member.id
 
-            table_id = 'table'
+            table_id = 'balmy-visitor-360604.bc_neo.wwn_public'
             df = bpd.read_gbq(table_id, use_cache=False)
             df_sorted = df.sort_values('id')
             filtered_df = df_sorted[df_sorted['discord_id'] != d_id]
@@ -428,7 +450,7 @@ class Blitz(commands.Cog):
             await member.remove_roles(role_visitor)
             await member.add_roles(role_ign)
 
-            filtered_df.to_gbq('table', if_exists='replace')
+            filtered_df.to_gbq('balmy-visitor-360604.bc_neo.wwn_public', if_exists='replace')
             await ctx.send(f"{member.name}の登録データを削除しました")
 
     @commands.hybrid_command(name = "bcn_command_help", with_app_command = True, description ="ヘルプ")
